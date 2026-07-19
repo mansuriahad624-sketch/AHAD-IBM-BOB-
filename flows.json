@@ -1,0 +1,240 @@
+[
+    {
+        "id": "hyper_local_supply_predictor_flow",
+        "type": "tab",
+        "label": "AI Hyper-Local Supply Predictor",
+        "disabled": false,
+        "info": "This flow automates local weather, inventory data collection, sends it to IBM watsonx.ai, and triggers BOB automation workflows for predictions and auto-ordering."
+    },
+    {
+        "id": "trigger_every_saturday",
+        "type": "inject",
+        "z": "hyper_local_supply_predictor_flow",
+        "name": "Saturday 8:00 AM Trigger (Workflow 1)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "00 08 * * 6",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "Start Automation Pipeline",
+        "payloadType": "str",
+        "x": 190,
+        "y": 140,
+        "wires": [
+            [
+                "fetch_bob_inventory",
+                "fetch_local_weather"
+            ]
+        ]
+    },
+    {
+        "id": "fetch_bob_inventory",
+        "type": "http request",
+        "z": "hyper_local_supply_predictor_flow",
+        "name": "BOB Database / Sheet - Current Stock",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://api.buildobiz.com/v1/storage/inventory",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 510,
+        "y": 100,
+        "wires": [
+            [
+                "join_data_variables"
+            ]
+        ]
+    },
+    {
+        "id": "fetch_local_weather",
+        "type": "http request",
+        "z": "hyper_local_supply_predictor_flow",
+        "name": "Fetch Hyper-Local Weather API",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://api.weatherapi.com/v1/forecast.json?key=YOUR_API_KEY&q=Local_Region",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 490,
+        "y": 180,
+        "wires": [
+            [
+                "join_data_variables"
+            ]
+        ]
+    },
+    {
+        "id": "join_data_variables",
+        "type": "join",
+        "z": "hyper_local_supply_predictor_flow",
+        "name": "Merge Variables",
+        "mode": "custom",
+        "build": "object",
+        "property": "payload",
+        "propertyType": "msg",
+        "key": "topic",
+        "timer": "5",
+        "count": "2",
+        "reduceRight": false,
+        "reduceExp": "",
+        "reduceInit": "",
+        "reduceInitType": "",
+        "reduceFixup": "",
+        "x": 780,
+        "y": 140,
+        "wires": [
+            [
+                "prepare_ibm_payload"
+            ]
+        ]
+    },
+    {
+        "id": "prepare_ibm_payload",
+        "type": "function",
+        "z": "hyper_local_supply_predictor_flow",
+        "name": "No-Code Payload Formatter",
+        "func": "// Prepare data structure for IBM watsonx AutoAI\nmsg.headers = {\n    \"Authorization\": \"Bearer YOUR_IBM_CLOUD_IAM_TOKEN\",\n    \"Content-Type\": \"application/json\"\n};\n\nmsg.payload = {\n    \"input_data\": [\n        {\n            \"fields\": [\"current_stock\", \"weather_forecast\", \"upcoming_festivals\"],\n            \"values\": [[\n                msg.payload.inventory,\n                msg.payload.weather,\n                \"Upcoming Festival Context\"\n            ]]\n        }\n    ]\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 200,
+        "y": 320,
+        "wires": [
+            [
+                "ibm_watsonx_autoai"
+            ]
+        ]
+    },
+    {
+        "id": "ibm_watsonx_autoai",
+        "type": "http request",
+        "z": "hyper_local_supply_predictor_flow",
+        "name": "IBM watsonx.ai Prediction Engine",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://us-south.ml.cloud.ibm.com/ml/v4/deployments/YOUR_DEPLOYMENT_ID/predictions?version=2026-07-19",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 520,
+        "y": 320,
+        "wires": [
+            [
+                "process_ai_insights"
+            ]
+        ]
+    },
+    {
+        "id": "process_ai_insights",
+        "type": "function",
+        "z": "hyper_local_supply_predictor_flow",
+        "name": "Evaluate Supply Alerts & Rules",
+        "func": "let prediction = msg.payload.predictions[0].values[0];\nlet demandIncrease = prediction.demand_growth_percentage;\nlet currentStock = prediction.stock_level;\n\nmsg.whatsapp_payload = {\n    \"to\": \"DUKANDAR_NUMBER\",\n    \"message\": `AI Alert: Demand is expected to increase by ${demandIncrease}% next week due to weather/events. Current stock is ${currentStock}.` \n};\n\n// Workflow 2 Condition: Check if stock is critically low and demand is high\nif (currentStock < 20 && demandIncrease > 25) {\n    msg.trigger_auto_order = true;\n    msg.order_payload = {\n        \"supplier_email\": \"supplier@wholesale.com\",\n        \"subject\": \"Smart Auto-Order: Urgent Supply Replenishment Required\",\n        \"body\": \"Based on AI Hyper-Local analysis, please dispatch emergency stock package for next week.\"\n    };\n} else {\n    msg.trigger_auto_order = false;\n}\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 840,
+        "y": 320,
+        "wires": [
+            [
+                "bob_whatsapp_notification",
+                "check_auto_order_condition"
+            ]
+        ]
+    },
+    {
+        "id": "bob_whatsapp_notification",
+        "type": "http request",
+        "z": "hyper_local_supply_predictor_flow",
+        "name": "BOB WhatsApp / Email Connector",
+        "method": "POST",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "https://api.buildobiz.com/v1/notifications/send",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 1200,
+        "y": 260,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "check_auto_order_condition",
+        "type": "switch",
+        "z": "hyper_local_supply_predictor_flow",
+        "name": "Is Auto-Order Triggered? (Workflow 2)",
+        "property": "trigger_auto_order",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "true"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 1,
+        "x": 240,
+        "y": 480,
+        "wires": [
+            [
+                "bob_auto_order_supplier"
+            ]
+        ]
+    },
+    {
+        "id": "bob_auto_order_supplier",
+        "type": "http request",
+        "z": "hyper_local_supply_predictor_flow",
+        "name": "BOB Supplier Order Dispatcher",
+        "method": "POST",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "https://api.buildobiz.com/v1/integrations/mail",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 610,
+        "y": 480,
+        "wires": [
+            []
+        ]
+    }
+]
